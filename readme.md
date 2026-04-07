@@ -1,26 +1,61 @@
-# CI/CD Pipeline Setup Using GitHub Actions for React JS and Node.js (Express)
+# CI/CD Pipeline Setup Using GitHub Actions for React JS and Node.js (Express) on AWS
 
-This guide explains how to set up a basic CI/CD pipeline using GitHub Actions for:
+This guide explains how to set up a CI/CD pipeline for a full-stack application with:
 
-- a frontend built with pure React JS (JavaScript, not Vite)
-- a backend built with Node.js and Express
+- a React JS frontend (JavaScript, not Vite)
+- a Node.js Express backend
+- deployment on AWS
+- load balancing for the backend using an Application Load Balancer (ALB)
 
-The setup assumes both apps are stored in the same GitHub repository.
+This setup is designed for a harder, production-style deployment where:
 
-## 1. Suggested Project Structure
+- the React app is hosted from Amazon S3
+- static content is served through Amazon CloudFront
+- the Express backend runs on Amazon EC2 instances
+- traffic to the backend goes through an AWS Application Load Balancer
+- GitHub Actions handles CI and deployment
 
-Use a structure similar to this:
+## 1. Recommended Architecture
+
+Use this architecture for the full-stack app:
+
+```text
+Users
+  |
+  +--> CloudFront
+         |
+         +--> S3 bucket for React frontend
+         |
+         +--> /api requests to ALB
+                          |
+                          +--> EC2 instance 1 running Express
+                          +--> EC2 instance 2 running Express
+```
+
+### Frontend
+
+- React app is built in GitHub Actions
+- the build output is uploaded to S3
+- CloudFront serves the frontend globally
+
+### Backend
+
+- Express app is deployed to one or more EC2 instances
+- an Application Load Balancer distributes traffic
+- ALB target group performs health checks
+
+## 2. Suggested Project Structure
 
 ```text
 your-repo/
 |-- client/
 |   |-- package.json
-|   |-- src/
 |   |-- public/
+|   |-- src/
 |
 |-- server/
 |   |-- package.json
-|   |-- src/ or app.js / server.js
+|   |-- app.js or server.js
 |
 |-- .github/
 |   |-- workflows/
@@ -28,19 +63,26 @@ your-repo/
 |       |-- cd.yml
 ```
 
-## 2. Prerequisites
+## 3. Prerequisites
 
-Before creating the pipeline, make sure you have:
+Before setting up CI/CD, make sure you have:
 
-- a GitHub repository for your project
-- a React app inside the `client` folder
-- a Node.js Express app inside the `server` folder
-- `package.json` files in both `client` and `server`
-- scripts defined for install, test, and build
+- a GitHub repository
+- a React app inside `client`
+- an Express app inside `server`
+- separate `package.json` files for both apps
+- an AWS account
+- an S3 bucket for frontend hosting
+- a CloudFront distribution in front of the S3 bucket
+- at least two EC2 instances for the backend
+- an Application Load Balancer
+- an ALB target group attached to the EC2 instances
+- a security group allowing ALB-to-EC2 traffic
+- an IAM user or IAM role with deployment permissions
 
-## 3. Add Required npm Scripts
+## 4. Add Required npm Scripts
 
-Make sure your frontend `client/package.json` includes scripts like:
+Example `client/package.json` scripts:
 
 ```json
 {
@@ -52,7 +94,7 @@ Make sure your frontend `client/package.json` includes scripts like:
 }
 ```
 
-Make sure your backend `server/package.json` includes scripts like:
+Example `server/package.json` scripts:
 
 ```json
 {
@@ -64,27 +106,25 @@ Make sure your backend `server/package.json` includes scripts like:
 }
 ```
 
-If your server uses Jest or another test runner, replace the `test` command accordingly.
+If you use Jest or another test runner on the backend, replace the `test` script accordingly.
 
-## 4. Create the GitHub Actions Folder
+## 5. Create the GitHub Actions Folder
 
-Inside the root of your repository, create:
+Create this directory in the repo root:
 
 ```text
 .github/workflows
 ```
 
-This is where GitHub Actions workflow files are stored.
+## 6. Create the CI Workflow
 
-## 5. Create the CI Workflow
-
-Create a file at:
+Create:
 
 ```text
 .github/workflows/ci.yml
 ```
 
-Add the following content:
+Use this workflow:
 
 ```yaml
 name: CI Pipeline
@@ -97,7 +137,7 @@ on:
 
 jobs:
   frontend:
-    name: Test Frontend
+    name: Frontend CI
     runs-on: ubuntu-latest
 
     defaults:
@@ -125,7 +165,7 @@ jobs:
         run: npm run build
 
   backend:
-    name: Test Backend
+    name: Backend CI
     runs-on: ubuntu-latest
 
     defaults:
@@ -150,86 +190,153 @@ jobs:
         run: npm test
 ```
 
-## 6. What This CI Workflow Does
+## 7. What the CI Workflow Does
 
 This workflow:
 
-- runs whenever code is pushed to `main` or `develop`
-- runs on pull requests targeting `main` or `develop`
-- installs dependencies for the React app
+- runs on push to `main` and `develop`
+- runs on pull requests targeting `main` and `develop`
+- installs frontend dependencies
 - tests and builds the React app
-- installs dependencies for the Express app
+- installs backend dependencies
 - runs backend tests
 
-This helps catch issues before deployment.
+This prevents broken code from reaching deployment.
 
-## 7. Create the CD Workflow
+## 8. AWS Infrastructure Setup
 
-Create another file at:
+Before writing the CD pipeline, create the AWS infrastructure.
+
+### 8.1 Create an S3 Bucket for React
+
+1. Open AWS S3.
+2. Create a bucket for the frontend.
+3. Use a globally unique name such as `my-fullstack-react-frontend-prod`.
+4. Keep versioning enabled if possible.
+5. Use the bucket to store the built React files.
+
+## 8.2 Create a CloudFront Distribution
+
+1. Open CloudFront.
+2. Create a distribution.
+3. Set the S3 bucket as the origin.
+4. Configure default root object as `index.html`.
+5. If using React Router, configure custom error handling:
+   - `403` -> `/index.html`
+   - `404` -> `/index.html`
+6. Use CloudFront to cache and serve the frontend.
+
+## 8.3 Launch EC2 Instances for Express
+
+1. Launch at least two EC2 instances in the same VPC.
+2. Use Amazon Linux 2 or Ubuntu.
+3. Install Node.js, npm, and PM2.
+4. Clone or prepare deployment access to your app.
+5. Open the backend application port, such as `3000`, only from the ALB security group.
+
+Install example dependencies on EC2:
+
+```bash
+sudo yum update -y
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo yum install -y nodejs git
+sudo npm install -g pm2
+```
+
+For Ubuntu:
+
+```bash
+sudo apt update
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs git
+sudo npm install -g pm2
+```
+
+## 8.4 Create an Application Load Balancer
+
+1. Open EC2 in AWS console.
+2. Create a new Application Load Balancer.
+3. Choose internet-facing if your API is public.
+4. Attach the ALB to public subnets.
+5. Add listeners:
+   - `HTTP : 80`
+   - `HTTPS : 443` if you have ACM certificates
+
+## 8.5 Create a Target Group
+
+1. Create a target group of type `Instances`.
+2. Choose protocol `HTTP`.
+3. Use the backend application port, for example `3000`.
+4. Set the health check path to something like:
+
+```text
+/health
+```
+
+5. Register the EC2 instances in the target group.
+
+Your Express app should expose a health route:
+
+```js
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+```
+
+## 8.6 Configure Security Groups
+
+Recommended security setup:
+
+- ALB security group:
+  - allow inbound `80` and `443` from the internet
+- EC2 security group:
+  - allow inbound app port like `3000` only from the ALB security group
+  - allow SSH only from your trusted IP if needed
+
+## 9. Decide How GitHub Actions Will Deploy to AWS
+
+For this setup, a strong approach is:
+
+- deploy frontend directly from GitHub Actions to S3
+- invalidate CloudFront cache after upload
+- deploy backend to EC2 using AWS Systems Manager (SSM) or SSH
+
+For production, SSM is preferred over plain SSH because it is more secure and easier to audit.
+
+## 10. Store GitHub Secrets
+
+In your GitHub repository:
+
+1. Open `Settings`.
+2. Go to `Secrets and variables` > `Actions`.
+3. Add these secrets:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `S3_BUCKET_NAME`
+- `CLOUDFRONT_DISTRIBUTION_ID`
+- `EC2_INSTANCE_ID_1`
+- `EC2_INSTANCE_ID_2`
+
+If your backend uses environment variables, also add:
+
+- `JWT_SECRET`
+- `MONGO_URI`
+- any app-specific secrets
+
+## 11. Create the CD Workflow for AWS
+
+Create:
 
 ```text
 .github/workflows/cd.yml
 ```
 
-Add this example workflow:
+Use this example:
 
 ```yaml
-name: CD Pipeline
-
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  deploy:
-    name: Deploy Application
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Deployment placeholder
-        run: echo "Add your deployment commands here"
-```
-
-## 8. Choose a Deployment Target
-
-GitHub Actions can deploy your frontend and backend to different platforms. Common choices are:
-
-- React frontend to GitHub Pages, Netlify, or Vercel
-- Express backend to Render, Railway, AWS, Azure, or a VPS
-
-You should update `cd.yml` based on where you want to deploy.
-
-## 9. Example: Deploy React App to GitHub Pages
-
-If you want to deploy only the React frontend to GitHub Pages:
-
-First install `gh-pages` in the client app:
-
-```bash
-cd client
-npm install gh-pages --save-dev
-```
-
-Then update `client/package.json`:
-
-```json
-{
-  "homepage": "https://your-username.github.io/your-repo-name",
-  "scripts": {
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
-  }
-}
-```
-
-Example frontend deployment workflow:
-
-```yaml
-name: Deploy React Frontend
+name: CD Pipeline AWS
 
 on:
   push:
@@ -238,6 +345,7 @@ on:
 
 jobs:
   deploy-frontend:
+    name: Deploy Frontend to S3 and CloudFront
     runs-on: ubuntu-latest
 
     defaults:
@@ -255,106 +363,169 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build app
+      - name: Build frontend
         run: npm run build
 
-      - name: Deploy to GitHub Pages
-        run: npm run deploy
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload build to S3
+        run: aws s3 sync build/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
+
+      - name: Invalidate CloudFront cache
+        run: aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+
+  deploy-backend:
+    name: Deploy Backend to EC2
+    runs-on: ubuntu-latest
+    needs: deploy-frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EC2 instance 1 using SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID_1 }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Node backend" \
+            --parameters 'commands=[
+              "cd /var/www/app/server",
+              "git pull origin main",
+              "npm ci",
+              "pm2 restart server || pm2 start server.js --name server"
+            ]'
+
+      - name: Deploy to EC2 instance 2 using SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID_2 }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Node backend" \
+            --parameters 'commands=[
+              "cd /var/www/app/server",
+              "git pull origin main",
+              "npm ci",
+              "pm2 restart server || pm2 start server.js --name server"
+            ]'
 ```
 
-## 10. Example: Deploy Express App to Render
+## 12. Prepare EC2 for Git Pull and App Restart
 
-For Express apps, deployment is usually handled by connecting the GitHub repo directly to the hosting provider.
+Each EC2 backend server should:
 
-For Render:
+1. have your project checked out at a known path such as `/var/www/app`
+2. have Node.js installed
+3. have PM2 installed
+4. have permission to pull from GitHub
+5. have SSM agent installed and active
+6. have an IAM role allowing SSM access
 
-1. Create an account on Render.
-2. Click `New +` and choose `Web Service`.
-3. Connect your GitHub repository.
-4. Select the `server` folder as the root directory if needed.
-5. Set:
-   - Build Command: `npm install`
-   - Start Command: `npm start`
-6. Add environment variables in Render dashboard.
-7. Enable auto-deploy from the `main` branch.
+Example first-time setup on EC2:
 
-In this case, your GitHub Actions CI workflow still verifies code quality, while Render handles backend deployment automatically after GitHub updates.
-
-## 11. Store Secrets Safely
-
-If your deployment requires tokens, API keys, or credentials:
-
-1. Open your GitHub repository.
-2. Go to `Settings`.
-3. Open `Secrets and variables` > `Actions`.
-4. Add repository secrets such as:
-   - `RENDER_API_KEY`
-   - `JWT_SECRET`
-   - `MONGO_URI`
-   - any deployment token required by your hosting provider
-
-Use secrets in workflows like this:
-
-```yaml
-env:
-  MONGO_URI: ${{ secrets.MONGO_URI }}
+```bash
+mkdir -p /var/www/app
+cd /var/www/app
+git clone https://github.com/your-username/your-repo.git .
+cd server
+npm install
+pm2 start server.js --name server
+pm2 save
+pm2 startup
 ```
 
-Never hardcode secrets directly in workflow files.
+## 13. Recommended Zero-Downtime Backend Deployment Pattern
 
-## 12. Add Branch Protection
+For better production reliability:
 
-To make CI/CD more reliable:
+1. Put at least two EC2 instances behind the ALB.
+2. Deploy one instance at a time.
+3. Let the ALB health check confirm the instance is healthy.
+4. Then deploy the next instance.
 
-1. Go to GitHub repository `Settings`.
-2. Open `Branches`.
-3. Add a branch protection rule for `main`.
-4. Enable:
-   - `Require a pull request before merging`
-   - `Require status checks to pass before merging`
-   - select your CI workflow checks
+This avoids taking the whole API offline during deployment.
 
-This ensures only tested code reaches production.
+If you want an even stronger setup, use:
 
-## 13. Optional Improvements
+- AWS CodeDeploy with in-place or blue/green deployments
+- an Auto Scaling Group behind the ALB
+- launch templates for repeatable server creation
 
-After the basic pipeline works, you can improve it by adding:
+That is usually the best long-term AWS deployment model.
 
-- linting with ESLint
-- code formatting checks
-- test coverage reports
-- separate staging and production deployments
-- Docker-based deployment
-- notifications to Slack or email
-- environment-specific `.env` management
+## 14. Optional Improved Production Architecture
 
-## 14. Recommended Workflow Summary
+For a more robust full-stack AWS setup, use:
 
-A practical setup is:
+- React frontend in S3 + CloudFront
+- Express backend on EC2 Auto Scaling Group
+- ALB in front of EC2
+- RDS for relational database if needed
+- ElastiCache for caching if needed
+- Route 53 for DNS
+- ACM for SSL certificates
+- CodeDeploy for controlled rolling deployments
 
-1. Developer pushes code to a feature branch.
-2. Pull request is created to `develop` or `main`.
-3. GitHub Actions runs frontend and backend CI checks.
-4. If tests pass, code is merged.
-5. A push to `main` triggers deployment.
-6. Frontend and backend are deployed to their respective platforms.
+This is better than deploying everything to a single EC2 server.
 
-## 15. Final Notes
+## 15. Branch Protection and Release Flow
 
-- Keep frontend and backend workflows simple at first.
-- Make sure both apps run correctly locally before automating them.
-- Always test the workflow after pushing the YAML files.
-- Adjust folder paths if your project structure is different.
+In GitHub:
 
-If you want, you can also split the pipeline into:
+1. open `Settings`
+2. open `Branches`
+3. add a branch protection rule for `main`
+4. require pull requests before merging
+5. require CI checks to pass before merging
 
-- one workflow for frontend CI/CD
-- one workflow for backend CI/CD
-- one workflow for full-stack deployment
+Recommended flow:
 
-That approach is useful for larger projects.
+1. push feature code to a branch
+2. open a pull request
+3. GitHub Actions runs CI
+4. merge into `main`
+5. GitHub Actions deploys frontend to S3 and backend to EC2
+6. ALB continues routing traffic to healthy instances
+
+## 16. Optional Improvements
+
+You can improve this pipeline further by adding:
+
+- ESLint checks for frontend and backend
+- test coverage reporting
+- Docker images pushed to Amazon ECR
+- ECS or EKS instead of EC2 for containerized deployment
+- staging and production AWS environments
+- Terraform or CloudFormation for infrastructure as code
+- rollback logic if health checks fail
+
+## 17. Final Notes
+
+- Keep the frontend and backend deployment steps separate.
+- Use S3 plus CloudFront for the React app instead of serving static files from Express.
+- Use at least two backend instances behind the ALB.
+- Prefer SSM or CodeDeploy over manual SSH deployment.
+- Add a `/health` route in Express for ALB health checks.
+- Test the workflow in a non-production AWS environment first.
+
+If you want, the next step can be creating actual ready-to-use files for:
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/cd.yml`
+- a sample `app.get('/health', ...)` Express snippet
+- a deployment script for EC2 instances
