@@ -1,6 +1,4 @@
-# Guide 1: Medium Experiment
-
-## CI/CD Pipeline Using GitHub Actions
+# Guide: - CI/CD Pipeline Using GitHub Actions
 
 This guide explains how to build a simple CI/CD pipeline using GitHub Actions for a full-stack project.
 
